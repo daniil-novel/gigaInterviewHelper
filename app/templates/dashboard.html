@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Interview AutoPrep</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+    <div class="page-shell">
+        <header class="hero">
+            <div>
+                <p class="eyebrow">AI Interview MVP</p>
+                <h1>Панель быстрых ответов</h1>
+                <p class="hero-copy">Почта ловит приглашения, OpenRouter собирает профиль, а ты открываешь ссылку AI-интервью в браузере и вставляешь готовый ответ вручную.</p>
+            </div>
+            <div class="stats-grid">
+                <article class="stat-card"><span>Сессии</span><strong>{{ stats.sessions_total }}</strong></article>
+                <article class="stat-card"><span>Ждут подтверждения</span><strong>{{ stats.sessions_waiting_approval }}</strong></article>
+                <article class="stat-card"><span>Вопросы</span><strong>{{ stats.questions_total }}</strong></article>
+                <article class="stat-card"><span>Письма</span><strong>{{ stats.emails_total }}</strong></article>
+            </div>
+        </header>
+
+        {% if ui_notice %}
+        <section class="notice-banner notice-{{ ui_notice_type or 'info' }}">
+            <div>
+                <strong>
+                    {% if ui_notice_type == 'error' %}Нужно действие{% elif ui_notice_type == 'success' %}Готово{% else %}Статус{% endif %}
+                </strong>
+                <p>{{ ui_notice }}</p>
+            </div>
+            {% if ui_notice_link %}
+            <a class="ghost-link-btn compact-link" href="{{ ui_notice_link }}" target="_blank" rel="noopener noreferrer">Открыть нужную страницу</a>
+            {% endif %}
+        </section>
+        {% endif %}
+
+        <main class="layout layout-wide">
+            <section class="panel profile-panel">
+                <div class="panel-head">
+                    <h2>Профиль кандидата</h2>
+                    <span>Последнее обновление: {{ stats.last_resume_update or 'ещё не было' }}</span>
+                </div>
+                <div class="info-strip">
+                    <span>Резюме: {{ profile.source_resume_name or 'ещё не загружено' }}</span>
+                    <span>Модель парсинга: {{ profile.last_parsed_with_model or 'ещё не использовалась' }}</span>
+                </div>
+                {% if profile.parsing_notes %}
+                <div class="warning-box">
+                    <span>{{ profile.parsing_notes }}</span>
+                </div>
+                {% endif %}
+                <form class="stack" action="/profile/import-form" method="post" enctype="multipart/form-data">
+                    <label class="file-drop">
+                        <span>Импортировать `resume.pdf` через OpenRouter PDF parsing</span>
+                        <input type="file" name="file" accept="application/pdf" required />
+                    </label>
+                    <button class="ghost-btn" type="submit">Загрузить PDF</button>
+                </form>
+                <form class="stack" action="/profile/update-form" method="post">
+                    <div class="two-col">
+                        <label><span>ФИО</span><input name="full_name" value="{{ profile.full_name }}" /></label>
+                        <label><span>Текущая роль</span><input name="current_role" value="{{ profile.current_role }}" /></label>
+                    </div>
+                    <label><span>Краткий опыт</span><textarea name="experience_summary">{{ profile.experience_summary }}</textarea></label>
+                    <div class="two-col">
+                        <label><span>English</span><input name="english_level" value="{{ profile.english_level }}" /></label>
+                        <label><span>Зарплатные ожидания</span><input name="salary_expectation" value="{{ profile.salary_expectation }}" /></label>
+                    </div>
+                    <div class="two-col">
+                        <label><span>Формат работы</span><input name="work_format" value="{{ profile.work_format }}" /></label>
+                        <label><span>Сроки выхода</span><input name="notice_period" value="{{ profile.notice_period }}" /></label>
+                    </div>
+                    <div class="two-col">
+                        <label><span>Навыки</span><textarea name="skills">{{ (profile.skills or []) | join('\n') }}</textarea></label>
+                        <label><span>Проекты</span><textarea name="projects">{{ (profile.projects or []) | join('\n') }}</textarea></label>
+                    </div>
+                    <div class="two-col">
+                        <label><span>Образование</span><textarea name="education">{{ (profile.education or []) | join('\n') }}</textarea></label>
+                        <label><span>Достижения</span><textarea name="achievements">{{ (profile.achievements or []) | join('\n') }}</textarea></label>
+                    </div>
+                    <label><span>Стоп-факты</span><textarea name="must_not_claim">{{ (profile.must_not_claim or []) | join('\n') }}</textarea></label>
+                    <button class="primary-btn" type="submit">Сохранить профиль</button>
+                </form>
+            </section>
+
+            <section class="panel sessions-panel">
+                <div class="panel-head">
+                    <h2>Сессии интервью</h2>
+                    <span>Можно создавать вручную, из n8n или автоматически из личной почты</span>
+                </div>
+                <form class="stack form-inline" action="/sessions/create-from-form" method="post">
+                    <input name="vacancy_name" placeholder="Название вакансии" required />
+                    <input name="interview_url" placeholder="Ссылка на AI-интервью" required />
+                    <input name="source_email" placeholder="source_email" />
+                    <input name="subject" placeholder="Тема письма" />
+                    <button class="primary-btn" type="submit">Создать сессию</button>
+                </form>
+                <div class="session-list">
+                    {% for session in sessions %}
+                    <article class="session-card">
+                        <div class="session-head">
+                            <div>
+                                <h3>{{ session.vacancy_name or 'Без названия' }}</h3>
+                                <p><a class="inline-link" href="{{ session.interview_url }}" target="_blank" rel="noopener noreferrer">{{ session.interview_url }}</a></p>
+                                <p class="meta-line">Источник: {{ session.source_email or 'manual' }} | {{ session.subject or 'без темы' }}</p>
+                            </div>
+                            <span class="status-chip status-{{ session.state }}">{{ session.state }}</span>
+                        </div>
+                        <div class="info-strip compact-strip">
+                            <span>Базовый сценарий: открой ссылку интервью в браузере, сгенерируй ответ здесь и вставь его вручную в форму интервью.</span>
+                        </div>
+                        <div class="action-row two-actions">
+                            <a class="ghost-link-btn" href="{{ session.interview_url }}" target="_blank" rel="noopener noreferrer">Открыть интервью</a>
+                            <span></span>
+                        </div>
+                        <form class="stack" action="/sessions/{{ session.session_id }}/ask-form" method="post">
+                            <label><span>Новый вопрос</span><textarea name="question" placeholder="Например: Почему вам интересна эта роль?" required></textarea></label>
+                            <button class="ghost-btn" type="submit">Сгенерировать ответ</button>
+                        </form>
+                        <div class="qa-list">
+                            {% for item in session.questions | reverse %}
+                            <div class="qa-card">
+                                <p class="qa-label">Вопрос</p>
+                                <p>{{ item.question }}</p>
+                                <p class="qa-label">Черновик</p>
+                                <p>{{ item.draft_answer or 'Ответ ещё не сгенерирован' }}</p>
+                                {% if item.meta and item.meta.warnings %}
+                                <div class="warning-box">
+                                    {% for warning in item.meta.warnings %}
+                                    <span>{{ warning }}</span>
+                                    {% endfor %}
+                                </div>
+                                {% endif %}
+                                {% if item.meta and item.meta.telegram_delivery %}
+                                <div class="info-strip compact-strip">
+                                    <span>Telegram delivery: {{ item.meta.telegram_delivery.status }}</span>
+                                    {% if item.meta.telegram_delivery.message_id %}<span>message_id: {{ item.meta.telegram_delivery.message_id }}</span>{% endif %}
+                                    {% if item.meta.telegram_delivery.error %}<span>error: {{ item.meta.telegram_delivery.error }}</span>{% endif %}
+                                </div>
+                                {% endif %}
+                                {% if not (item.meta and item.meta.telegram_delivery and item.meta.telegram_delivery.status == 'sent') %}
+                                <div class="info-strip compact-strip">
+                                    <span>Нажми `Открыть интервью`, скопируй этот текст и вставь его вручную в браузере.</span>
+                                </div>
+                                {% endif %}
+                                <form class="stack" action="/questions/{{ item.id }}/action-form" method="post">
+                                    <textarea name="final_answer" placeholder="Здесь можно быстро поправить текст">{{ item.final_answer or item.draft_answer }}</textarea>
+                                    <div class="action-row">
+                                        <button class="primary-btn" type="submit" name="action" value="approve">Отправить</button>
+                                        <button class="ghost-btn" formaction="/questions/{{ item.id }}/regenerate-form" formmethod="post" type="submit">Перегенерировать</button>
+                                        <button class="ghost-btn" type="submit" name="action" value="edit">Редактировать</button>
+                                        <button class="danger-btn" type="submit" name="action" value="skip">Пропустить</button>
+                                    </div>
+                                </form>
+                                <p class="meta-line">Статус: {{ item.status }} | Валидация: {{ item.validation_status }} | Источник: {{ item.meta.source if item.meta else 'n/a' }}</p>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </article>
+                    {% else %}
+                    <div class="empty-box">Сессий пока нет. Можно создать вручную, через `/api/email-ingest` или включить автоопрос почты.</div>
+                    {% endfor %}
+                </div>
+            </section>
+
+            <section class="panel side-panel">
+                <div class="panel-head">
+                    <h2>OpenRouter</h2>
+                    <span>Ключ и модель можно менять на лету</span>
+                </div>
+                <form class="stack" action="/settings/openrouter-form" method="post">
+                    <label><span>API key</span><input type="password" name="openrouter_api_key" value="{{ app_settings.openrouter_api_key }}" placeholder="sk-or-v1-..." /></label>
+                    <label><span>Модель</span><input name="openrouter_model" value="{{ app_settings.openrouter_model }}" /></label>
+                    <label>
+                        <span>PDF engine</span>
+                        <select name="pdf_engine">
+                            <option value="pdf-text" {% if app_settings.pdf_engine == 'pdf-text' %}selected{% endif %}>pdf-text</option>
+                            <option value="mistral-ocr" {% if app_settings.pdf_engine == 'mistral-ocr' %}selected{% endif %}>mistral-ocr</option>
+                        </select>
+                    </label>
+                    <div class="info-strip"><span>Текущий ключ: {{ masked_openrouter_key }}</span></div>
+                    <button class="primary-btn" type="submit">Сохранить OpenRouter</button>
+                </form>
+
+                <div class="panel-head top-gap">
+                    <h2>Личная почта</h2>
+                    <span>Gmail OAuth 2.0 или IMAP fallback для писем от hh.ru и Пульс</span>
+                </div>
+                <form class="stack" action="/settings/mailbox-form" method="post">
+                    <label>
+                        <span>Провайдер почты</span>
+                        <select name="mail_provider">
+                            <option value="gmail_oauth" {% if app_settings.mail_provider == 'gmail_oauth' %}selected{% endif %}>Gmail OAuth</option>
+                            <option value="imap" {% if app_settings.mail_provider == 'imap' %}selected{% endif %}>IMAP</option>
+                        </select>
+                    </label>
+                    <label><span>Личный email</span><input name="personal_email" value="{{ app_settings.personal_email }}" placeholder="name@gmail.com" /></label>
+                    <div class="two-col">
+                        <label><span>Google OAuth Client ID</span><input name="gmail_oauth_client_id" value="{{ app_settings.gmail_oauth_client_id }}" placeholder="...apps.googleusercontent.com" /></label>
+                        <label><span>Google OAuth Client Secret</span><input type="password" name="gmail_oauth_client_secret" value="{{ app_settings.gmail_oauth_client_secret }}" /></label>
+                    </div>
+                    <label><span>Redirect URI</span><input name="gmail_oauth_redirect_uri" value="{{ app_settings.gmail_oauth_redirect_uri or 'http://127.0.0.1:8000/auth/gmail/callback' }}" placeholder="http://127.0.0.1:8000/auth/gmail/callback" /></label>
+                    <div class="info-strip compact-strip">
+                        <span>Gmail OAuth status: {{ app_settings.gmail_oauth_status }}</span>
+                        <span>Client secret: {{ masked_gmail_client_secret }}</span>
+                        <span>Refresh token: {{ 'сохранён' if has_gmail_refresh_token else 'ещё нет' }}</span>
+                    </div>
+                    <div class="action-row two-actions">
+                        <button class="ghost-btn" formaction="/gmail/oauth/start-form" formmethod="post" type="submit">Подключить Gmail</button>
+                        <button class="primary-btn" type="submit">Сохранить почту</button>
+                    </div>
+                    <div class="action-row two-actions">
+                        <a class="ghost-link-btn" href="/mailbox/diagnostics-view">Проверить Gmail OAuth</a>
+                        <span></span>
+                    </div>
+                    <div class="two-col">
+                        <label><span>IMAP host</span><input name="imap_host" value="{{ app_settings.imap_host }}" placeholder="imap.gmail.com" /></label>
+                        <label><span>IMAP port</span><input name="imap_port" type="number" value="{{ app_settings.imap_port }}" /></label>
+                    </div>
+                    <div class="two-col">
+                        <label><span>Пароль / app password</span><input type="password" name="imap_password" value="{{ app_settings.imap_password }}" /></label>
+                        <label><span>Папка</span><input name="imap_folder" value="{{ app_settings.imap_folder }}" /></label>
+                    </div>
+                    <div class="two-col align-end">
+                        <label class="checkbox-row"><input type="checkbox" name="mail_poll_enabled" value="yes" {% if app_settings.mail_poll_enabled == 'yes' %}checked{% endif %} /><span>Включить автоопрос</span></label>
+                        <label><span>Интервал, сек</span><input name="mail_poll_interval_seconds" type="number" value="{{ app_settings.mail_poll_interval_seconds }}" min="15" /></label>
+                    </div>
+                    <div class="info-strip compact-strip">
+                        <span>Фильтры: `noreply@hh.ru`, `hrplatform@sberbank.ru`</span>
+                        <span>Сохранённый пароль: {{ masked_imap_password }}</span>
+                        <span>Последний UID: {{ app_settings.last_email_uid or 'ещё нет' }}</span>
+                    </div>
+                    <button class="ghost-btn" formaction="/mailbox/sync-form" formmethod="post" type="submit">Проверить почту сейчас</button>
+                </form>
+
+                <div class="panel-head top-gap">
+                    <h2>Advanced Telegram</h2>
+                    <span>Эта секция не нужна для обычного сценария через браузер. Она только для редкого режима автосендера.</span>
+                </div>
+                <details class="advanced-box">
+                    <summary>Показать advanced Telegram настройки</summary>
+                    <div class="info-strip compact-strip top-gap">
+                        <span>Самый простой путь: вообще не заполнять этот блок. Просто открывай ссылку интервью и вставляй готовый ответ вручную.</span>
+                        <span>Advanced режим нужен только если ты хочешь, чтобы приложение пыталось отправлять сообщения в Telegram само.</span>
+                    </div>
+                    <form class="stack top-gap" action="/settings/telegram-form" method="post">
+                    <div class="two-col">
+                        <label><span>API ID</span><input name="telegram_api_id" value="{{ app_settings.telegram_api_id }}" /></label>
+                        <label><span>Phone number</span><input name="telegram_phone_number" value="{{ app_settings.telegram_phone_number }}" placeholder="+79990000000" /></label>
+                    </div>
+                    <label><span>API Hash</span><input type="password" name="telegram_api_hash" value="{{ app_settings.telegram_api_hash }}" /></label>
+                    <label><span>2FA password</span><input type="password" name="telegram_2fa_password" value="{{ app_settings.telegram_2fa_password }}" /></label>
+                    <label class="checkbox-row"><input type="checkbox" name="auto_send_telegram" value="yes" {% if app_settings.auto_send_telegram == 'yes' %}checked{% endif %} /><span>Автоматически отправлять подтверждённый ответ в Telegram</span></label>
+                    <div class="info-strip compact-strip">
+                        <span>Auth status: {{ app_settings.telegram_auth_status }}</span>
+                        <span>API hash: {{ masked_telegram_hash }}</span>
+                        <span>Session: {{ 'готова' if has_telegram_session else 'ещё нет' }}</span>
+                    </div>
+                    <button class="primary-btn" type="submit">Сохранить Telegram</button>
+                    </form>
+                    <div class="warning-box">
+                        <span>`Ваш ID` в Telegram не подходит для этого режима. Нужны именно `api_id` и `api_hash` приложения с my.telegram.org.</span>
+                    </div>
+                    <form class="stack" action="/telegram/request-code-form" method="post">
+                    <button class="ghost-btn" type="submit">Отправить код в Telegram</button>
+                    </form>
+                    <form class="stack" action="/telegram/verify-code-form" method="post">
+                    <label><span>Код подтверждения</span><input name="code" placeholder="12345" /></label>
+                    <label><span>2FA password для подтверждения</span><input type="password" name="telegram_2fa_password" value="{{ app_settings.telegram_2fa_password }}" /></label>
+                    <button class="ghost-btn" type="submit">Подтвердить код</button>
+                    </form>
+                </details>
+
+                <div class="panel-head top-gap">
+                    <h2>Последние письма</h2>
+                    <span>Лог входящих email</span>
+                </div>
+                <div class="mail-list">
+                    {% for email in emails %}
+                    <article class="mail-card">
+                        <strong>{{ email.subject }}</strong>
+                        <p>{{ email.source_email }}</p>
+                        <p>{{ email.vacancy_name or 'Вакансия не определена' }}</p>
+                        <p>{{ email.interview_url or 'Ссылка не найдена' }}</p>
+                        <p class="meta-line">matched: {{ email.matched }} | uid: {{ email.remote_uid or 'n/a' }} | {{ email.received_at }}</p>
+                    </article>
+                    {% else %}
+                    <div class="empty-box">Писем ещё нет.</div>
+                    {% endfor %}
+                </div>
+                <div class="panel-head top-gap">
+                    <h2>История Q/A</h2>
+                    <span>Последние 20 записей</span>
+                </div>
+                <div class="mail-list">
+                    {% for item in question_logs %}
+                    <article class="mail-card">
+                        <strong>{{ item.question }}</strong>
+                        <p>{{ item.final_answer or item.draft_answer }}</p>
+                        <p class="meta-line">{{ item.status }} | {{ item.updated_at }}</p>
+                    </article>
+                    {% else %}
+                    <div class="empty-box">История пока пустая.</div>
+                    {% endfor %}
+                </div>
+            </section>
+        </main>
+    </div>
+</body>
+</html>
