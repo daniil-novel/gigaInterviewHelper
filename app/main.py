@@ -112,6 +112,40 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     )
     emails = db.query(EmailLog).order_by(desc(EmailLog.received_at)).limit(10).all()
     logs = db.query(QuestionAnswer).order_by(desc(QuestionAnswer.updated_at)).limit(20).all()
+    existing_sessions_by_url = {session.interview_url: session for session in sessions if session.interview_url}
+    email_cards = []
+    for email in emails:
+        reparsed = email_service.parse_invite(
+            EmailIngestPayload(
+                source_email=email.source_email,
+                subject=email.subject,
+                html_body=email.html_body,
+                text_body=email.text_body,
+                received_at=email.received_at,
+            )
+        )
+        resolved_url = reparsed.interview_url or email.interview_url
+        resolved_vacancy = reparsed.vacancy_name or email.vacancy_name or email.subject
+        linked_session = existing_sessions_by_url.get(resolved_url)
+        email_cards.append(
+            {
+                'record': email,
+                'resolved_url': resolved_url,
+                'resolved_vacancy': resolved_vacancy,
+                'can_start_session': email_service.has_actionable_invite(resolved_url),
+                'existing_session': linked_session,
+                'effective_matched': reparsed.matched or email.matched == 'yes',
+            }
+        )
+
+    auto_sessions = [session for session in sessions if _session_created_automatically(session)]
+    automation_stats = {
+        'matched_invites': db.query(func.count(EmailLog.id)).filter(EmailLog.matched == 'yes').scalar() or 0,
+        'auto_sessions_total': len(auto_sessions),
+        'queued_sessions': len([session for session in auto_sessions if session.state in {'new', 'active', 'waiting_approval'}]),
+        'auto_questions_total': sum(len(session.questions) for session in auto_sessions),
+        'approved_answers_total': sum(1 for session in auto_sessions for item in session.questions if item.status == 'approved'),
+    }
     stats = DashboardStats(
         sessions_total=db.query(func.count(InterviewSession.id)).scalar() or 0,
         sessions_waiting_approval=db.query(func.count(InterviewSession.id)).filter(InterviewSession.state == 'waiting_approval').scalar() or 0,
@@ -125,9 +159,10 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
             'request': request,
             'profile': profile,
             'sessions': sessions,
-            'emails': emails,
+            'emails': email_cards,
             'question_logs': logs,
             'stats': stats,
+            'automation_stats': automation_stats,
             'app_settings': app_settings,
             'openrouter_settings': app_settings,
             'masked_openrouter_key': settings_service.masked_key(app_settings.openrouter_api_key),
@@ -139,6 +174,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
             'ui_notice': request.query_params.get('notice', ''),
             'ui_notice_type': request.query_params.get('notice_type', ''),
             'ui_notice_link': request.query_params.get('notice_link', ''),
+            'ui_active_tab': request.query_params.get('tab', 'sessions'),
         },
     )
 
@@ -215,15 +251,15 @@ async def gmail_oauth_callback(code: str | None = None, state: str | None = None
     if error:
         entry.gmail_oauth_status = f'error:{error}'
         settings_service.save_runtime(db, entry)
-        return _redirect_with_notice(f'Google OAuth returned error: {error}', notice_type='error')
+        return _redirect_with_notice(f'Google OAuth returned error: {error}', notice_type='error', tab='settings')
     if not code or not state or state != entry.gmail_oauth_state:
-        return _redirect_with_notice('Invalid Gmail OAuth callback state. Try connecting Gmail again.', notice_type='error')
+        return _redirect_with_notice('Invalid Gmail OAuth callback state. Try connecting Gmail again.', notice_type='error', tab='settings')
     try:
         token_data = await gmail_oauth_service.exchange_code(entry, code)
     except Exception as exc:
         entry.gmail_oauth_status = 'exchange_failed'
         settings_service.save_runtime(db, entry)
-        return _redirect_with_notice(f'Gmail OAuth token exchange failed: {exc}', notice_type='error')
+        return _redirect_with_notice(f'Gmail OAuth token exchange failed: {exc}', notice_type='error', tab='settings')
     entry.gmail_oauth_access_token = token_data.get('access_token', '')
     if token_data.get('refresh_token'):
         entry.gmail_oauth_refresh_token = token_data['refresh_token']
@@ -231,8 +267,8 @@ async def gmail_oauth_callback(code: str | None = None, state: str | None = None
     entry.gmail_oauth_status = 'connected' if entry.gmail_oauth_refresh_token else 'missing_refresh_token'
     settings_service.save_runtime(db, entry)
     if entry.gmail_oauth_status == 'connected':
-        return _redirect_with_notice('Gmail OAuth connected. Now click "Проверить почту сейчас".', notice_type='success')
-    return _redirect_with_notice('Gmail connected, but refresh token is missing. Reconnect Gmail and make sure consent is granted.', notice_type='error')
+        return _redirect_with_notice('Gmail OAuth connected. Now click "Проверить почту сейчас".', notice_type='success', tab='settings')
+    return _redirect_with_notice('Gmail connected, but refresh token is missing. Reconnect Gmail and make sure consent is granted.', notice_type='error', tab='settings')
 
 
 @app.post('/api/settings/telegram')
@@ -287,14 +323,14 @@ async def mailbox_diagnostics(db: Session = Depends(get_db)):
 async def mailbox_diagnostics_view(db: Session = Depends(get_db)):
     entry = settings_service.get_or_create(db)
     if entry.mail_provider != 'gmail_oauth':
-        return _redirect_with_notice('Почта сейчас работает не через Gmail OAuth. Для Gmail-диагностики выбери провайдер Gmail OAuth.', notice_type='info')
+        return _redirect_with_notice('Почта сейчас работает не через Gmail OAuth. Для Gmail-диагностики выбери провайдер Gmail OAuth.', notice_type='info', tab='settings')
     try:
         result = await gmail_oauth_service.diagnose(entry)
         settings_service.save_runtime(db, entry)
-        return _redirect_with_notice('Gmail OAuth настроен корректно. Можно проверять почту.', notice_type='success')
+        return _redirect_with_notice('Gmail OAuth настроен корректно. Можно проверять почту.', notice_type='success', tab='settings')
     except GmailAPIError as exc:
         settings_service.save_runtime(db, entry)
-        return _redirect_with_notice(str(exc), notice_type='error', notice_link=exc.activation_url)
+        return _redirect_with_notice(str(exc), notice_type='error', notice_link=exc.activation_url, tab='settings')
 
 
 @app.post('/api/telegram/request-code')
@@ -480,7 +516,49 @@ def create_session_form(
         db,
         SessionCreatePayload(vacancy_name=vacancy_name, interview_url=interview_url, source_email=source_email, subject=subject),
     )
-    return RedirectResponse('/', status_code=303)
+    return RedirectResponse('/?tab=sessions', status_code=303)
+
+
+@app.post('/emails/{email_id}/start-session-form')
+def start_session_from_email_form(email_id: int, db: Session = Depends(get_db)):
+    email_record = db.query(EmailLog).filter(EmailLog.id == email_id).first()
+    if not email_record:
+        return _redirect_with_notice('Письмо не найдено. Обнови страницу и попробуй снова.', notice_type='error')
+
+    reparsed = email_service.parse_invite(
+        EmailIngestPayload(
+            source_email=email_record.source_email,
+            subject=email_record.subject,
+            html_body=email_record.html_body,
+            text_body=email_record.text_body,
+            received_at=email_record.received_at,
+        )
+    )
+    interview_url = reparsed.interview_url or email_record.interview_url
+    vacancy_name = reparsed.vacancy_name or email_record.vacancy_name or email_record.subject
+    if not email_service.has_actionable_invite(interview_url):
+        return _redirect_with_notice('Не удалось надёжно извлечь ссылку на интервью из этого письма. Открой письмо и создай сессию вручную.', notice_type='error')
+
+    email_record.interview_url = interview_url
+    email_record.vacancy_name = vacancy_name
+    email_record.matched = 'yes'
+    email_record.failure_reason = ''
+    db.add(email_record)
+    db.commit()
+
+    session = session_service.create_or_get_session(
+        db,
+        SessionCreatePayload(
+            vacancy_name=vacancy_name,
+            interview_url=interview_url,
+            source_email=email_record.source_email,
+            subject=email_record.subject,
+        ),
+    )
+    session.meta = {**(session.meta or {}), 'created_via': (session.meta or {}).get('created_via', 'email_log_manual_start'), 'email_log_id': email_record.id}
+    db.add(session)
+    db.commit()
+    return _redirect_with_notice(f'Сессия для вакансии "{vacancy_name}" готова. Можно сразу начинать отвечать.', notice_type='success', tab='sessions')
 
 
 @app.post('/profile/update-form')
@@ -514,13 +592,13 @@ def update_profile_form(
         must_not_claim=_split_lines(must_not_claim),
     )
     profile_service.update_profile(db, payload)
-    return RedirectResponse('/', status_code=303)
+    return RedirectResponse('/?tab=profile', status_code=303)
 
 
 @app.post('/profile/import-form')
 async def import_profile_form(file: UploadFile = File(...), db: Session = Depends(get_db)):
     await import_resume(file, db)
-    return RedirectResponse('/', status_code=303)
+    return RedirectResponse('/?tab=profile', status_code=303)
 
 
 @app.post('/settings/openrouter-form')
@@ -538,7 +616,7 @@ def save_openrouter_settings_form(
         ),
         db,
     )
-    return RedirectResponse('/', status_code=303)
+    return RedirectResponse('/?tab=settings', status_code=303)
 
 
 @app.post('/settings/mailbox-form')
@@ -572,7 +650,7 @@ def save_mailbox_settings_form(
         ),
         db,
     )
-    return RedirectResponse('/', status_code=303)
+    return RedirectResponse('/?tab=settings', status_code=303)
 
 
 @app.post('/gmail/oauth/start-form')
@@ -590,12 +668,13 @@ def sync_mailbox_form(db: Session = Depends(get_db)):
         return _redirect_with_notice(
             f'Почта проверена через {provider}. Обработано писем: {processed}. Новых сессий: {created_sessions}.',
             notice_type='success',
+            tab='inbox',
         )
     except HTTPException as exc:
         detail = exc.detail
         if isinstance(detail, dict):
-            return _redirect_with_notice(detail.get('message', 'Mailbox sync failed'), notice_type='error', notice_link=detail.get('activation_url', ''))
-        return _redirect_with_notice(str(detail), notice_type='error')
+            return _redirect_with_notice(detail.get('message', 'Mailbox sync failed'), notice_type='error', notice_link=detail.get('activation_url', ''), tab='settings')
+        return _redirect_with_notice(str(detail), notice_type='error', tab='settings')
 
 
 @app.post('/settings/telegram-form')
@@ -617,7 +696,7 @@ def save_telegram_settings_form(
         ),
         db,
     )
-    return RedirectResponse('/', status_code=303)
+    return RedirectResponse('/?tab=settings', status_code=303)
 
 
 @app.post('/telegram/request-code-form')
@@ -631,19 +710,19 @@ async def telegram_request_code_form(db: Session = Depends(get_db)):
         ),
         db,
     )
-    return RedirectResponse('/', status_code=303)
+    return RedirectResponse('/?tab=settings', status_code=303)
 
 
 @app.post('/telegram/verify-code-form')
 async def telegram_verify_code_form(code: str = Form(...), telegram_2fa_password: str = Form(''), db: Session = Depends(get_db)):
     await telegram_verify_code(TelegramCodeVerifyPayload(code=code, telegram_2fa_password=telegram_2fa_password), db)
-    return RedirectResponse('/', status_code=303)
+    return RedirectResponse('/?tab=settings', status_code=303)
 
 
 @app.post('/sessions/{session_id}/ask-form')
 async def ask_question_form(session_id: str, question: str = Form(...), db: Session = Depends(get_db)):
     await add_question(session_id, QuestionCreatePayload(question=question), db)
-    return RedirectResponse('/', status_code=303)
+    return RedirectResponse('/?tab=sessions', status_code=303)
 
 
 @app.post('/questions/{question_id}/action-form')
@@ -654,13 +733,13 @@ async def answer_action_form(
     db: Session = Depends(get_db),
 ):
     await handle_answer_action(question_id, AnswerActionPayload(action=action, final_answer=final_answer), db)
-    return RedirectResponse('/', status_code=303)
+    return RedirectResponse('/?tab=sessions', status_code=303)
 
 
 @app.post('/questions/{question_id}/regenerate-form')
 async def regenerate_answer_form(question_id: int, db: Session = Depends(get_db)):
     await regenerate_answer(question_id, db)
-    return RedirectResponse('/', status_code=303)
+    return RedirectResponse('/?tab=sessions', status_code=303)
 
 
 @app.get('/health')
@@ -681,8 +760,15 @@ def _run_mailbox_sync_once() -> None:
         db.close()
 
 
-def _redirect_with_notice(message: str, *, notice_type: str = 'info', notice_link: str = '') -> RedirectResponse:
+def _redirect_with_notice(message: str, *, notice_type: str = 'info', notice_link: str = '', tab: str = 'sessions') -> RedirectResponse:
     query = {'notice': message, 'notice_type': notice_type}
     if notice_link:
         query['notice_link'] = notice_link
+    if tab:
+        query['tab'] = tab
     return RedirectResponse(f"/?{urlencode(query)}", status_code=303)
+
+
+def _session_created_automatically(session: InterviewSession) -> bool:
+    created_via = str((session.meta or {}).get('created_via', '')).lower()
+    return created_via in {'gmail_oauth', 'imap_poll', 'mailbox_poll', 'email_log_manual_start'}
