@@ -106,7 +106,7 @@
                                         </div>
                                         <form class="stack top-gap" action="/questions/{{ item.id }}/action-form" method="post">
                                             <textarea name="final_answer" placeholder="Здесь можно быстро поправить текст">{{ item.final_answer or item.draft_answer }}</textarea>
-                                            <div class="action-row">
+                                            <div class="action-row qa-actions">
                                                 <button class="primary-btn" type="submit" name="action" value="approve">Отправить</button>
                                                 <button class="ghost-btn" formaction="/questions/{{ item.id }}/regenerate-form" formmethod="post" type="submit">Перегенерировать</button>
                                                 <button class="ghost-btn" type="submit" name="action" value="edit">Редактировать</button>
