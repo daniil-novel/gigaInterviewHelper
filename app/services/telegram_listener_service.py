@@ -112,6 +112,7 @@ PROMPT_MARKERS = (
 @dataclass
 class PendingChatBatch:
     username: str
+    message_ids: list[int] = field(default_factory=list)
     events: list[Any] = field(default_factory=list)
     texts: list[str] = field(default_factory=list)
     task: Optional[asyncio.Task] = None
@@ -269,6 +270,7 @@ class TelegramListenerService:
                     continue
                 batch = PendingChatBatch(
                     username=username,
+                    message_ids=[message_id for message_id, _ in inbound_cluster],
                     texts=[text for _, text in inbound_cluster],
                 )
                 await self._process_batch_guarded(chat_key, batch)
@@ -425,6 +427,7 @@ class TelegramListenerService:
                     batch.username = username
                     if batch.task and not batch.task.done():
                         batch.task.cancel()
+                batch.message_ids.append(int(event.message.id))
                 batch.events.append(event)
                 batch.texts.append(message_text)
                 batch.task = asyncio.create_task(
@@ -466,12 +469,20 @@ class TelegramListenerService:
 
     async def _process_pending_batch(self, chat_key: int, batch: PendingChatBatch) -> None:
         current_session = self._find_session_for_bot(batch.username)
+        last_handled_inbound_id = self._last_handled_inbound_id(batch.username)
         actionable_messages: list[str] = []
+        actionable_message_ids: list[int] = []
 
-        for message_text in batch.texts:
+        for index, message_text in enumerate(batch.texts):
+            message_id = batch.message_ids[index] if index < len(batch.message_ids) else 0
+            if message_id and message_id <= last_handled_inbound_id:
+                continue
+
             if self._looks_like_dialog_finished(message_text) or self._looks_like_feedback_request(message_text):
                 if current_session is not None:
                     self._complete_session(current_session, batch.username, message_text)
+                    if message_id:
+                        self._mark_messages_handled(batch.username, current_session, [message_id])
                     self._log_info(
                         'telegram_dialog_completed',
                         f'Session {current_session[1]} marked completed from @{batch.username}',
@@ -484,9 +495,13 @@ class TelegramListenerService:
                 current_session = synced_session
 
             if self._is_non_actionable_status(message_text):
+                if current_session is not None and message_id:
+                    self._mark_messages_handled(batch.username, current_session, [message_id])
                 continue
 
             actionable_messages.append(message_text)
+            if message_id:
+                actionable_message_ids.append(message_id)
 
         if not actionable_messages or current_session is None:
             return
@@ -513,6 +528,7 @@ class TelegramListenerService:
         else:
             return
 
+        self._mark_messages_handled(batch.username, current_session, actionable_message_ids)
         self._emit_interactive_trace('answer', batch.username, current_session[1], answer)
         self._log_info(
             'telegram_auto_answer_sent',
@@ -641,6 +657,7 @@ class TelegramListenerService:
         bootstrap_sent: bool = False,
     ) -> None:
         candidates = self._session_candidates_for_bot(db, username)
+        carried_last_handled = self._last_handled_inbound_id(username, candidates)
         for session in candidates:
             meta = dict(session.meta or {})
             if session.id == target.id:
@@ -650,6 +667,8 @@ class TelegramListenerService:
                 meta['telegram_last_synced_at'] = datetime.utcnow().isoformat()
                 meta['telegram_last_synced_score'] = match_score
                 meta['telegram_last_synced_message'] = match_text[:500]
+                if carried_last_handled:
+                    meta['telegram_last_handled_inbound_id'] = carried_last_handled
                 if bootstrap_sent:
                     meta['telegram_bootstrap_sent'] = True
                     meta['telegram_bootstrap_auto'] = True
@@ -768,6 +787,54 @@ class TelegramListenerService:
         return answer_text
 
     # ----------------------------------------------------------------- utils
+
+    def _last_handled_inbound_id(
+        self,
+        username: str,
+        candidates: list[InterviewSession] | None = None,
+    ) -> int:
+        db = None
+        if candidates is None:
+            db = SessionLocal()
+            try:
+                candidates = self._session_candidates_for_bot(db, username)
+            finally:
+                db.close()
+        best = 0
+        for session in candidates or []:
+            meta = dict(session.meta or {})
+            value = meta.get('telegram_last_handled_inbound_id')
+            if isinstance(value, int):
+                best = max(best, value)
+            elif isinstance(value, str) and value.isdigit():
+                best = max(best, int(value))
+        return best
+
+    def _mark_messages_handled(
+        self,
+        username: str,
+        session_ref: tuple[int, str],
+        message_ids: list[int],
+    ) -> None:
+        handled_ids = [message_id for message_id in message_ids if isinstance(message_id, int) and message_id > 0]
+        if not handled_ids:
+            return
+        handled_max = max(handled_ids)
+        session_pk, _ = session_ref
+        db = SessionLocal()
+        try:
+            candidates = self._session_candidates_for_bot(db, username)
+            for session in candidates:
+                meta = dict(session.meta or {})
+                current_value = meta.get('telegram_last_handled_inbound_id')
+                current_handled = int(current_value) if str(current_value).isdigit() else 0
+                if session.id == session_pk or meta.get('telegram_active_for_bot') == username:
+                    meta['telegram_last_handled_inbound_id'] = max(current_handled, handled_max)
+                    session.meta = meta
+                    db.add(session)
+            db.commit()
+        finally:
+            db.close()
 
     @staticmethod
     def _event_chat_key(event, sender) -> int:
