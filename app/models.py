@@ -123,3 +123,4 @@ class AppSetting(Base, TimestampMixin):
     telegram_phone_code_hash: Mapped[str] = mapped_column(Text, default='')
     telegram_auth_status: Mapped[str] = mapped_column(String(50), default='not_authorized')
     auto_send_telegram: Mapped[str] = mapped_column(String(10), default='no')
+    telegram_auto_reply_paused: Mapped[str] = mapped_column(String(10), default='no')

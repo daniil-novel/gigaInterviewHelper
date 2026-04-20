@@ -36,6 +36,7 @@ from app.services.profile_service import ProfileService
 from app.services.session_service import SessionService
 from app.services.settings_service import SettingsService
 from app.services.telegram_automation_service import TelegramAutomationService
+from app.services.telegram_listener_service import TelegramListenerService
 from app.services.validator_service import AnswerValidator
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -54,12 +55,14 @@ validator = AnswerValidator()
 settings_service = SettingsService()
 mailbox_automation_service = MailboxAutomationService()
 telegram_automation_service = TelegramAutomationService()
+telegram_listener_service = TelegramListenerService()
 gmail_oauth_service = GmailOAuthService()
 
 
 @app.on_event('startup')
 async def startup_event() -> None:
     app.state.mailbox_poll_task = asyncio.create_task(mailbox_poll_loop())
+    await telegram_listener_service.start()
 
 
 @app.on_event('shutdown')
@@ -69,6 +72,8 @@ async def shutdown_event() -> None:
         task.cancel()
         with suppress(asyncio.CancelledError):
             await task
+    with suppress(Exception):
+        await telegram_listener_service.stop()
 
 
 async def mailbox_poll_loop() -> None:
@@ -697,6 +702,19 @@ def save_telegram_settings_form(
         db,
     )
     return RedirectResponse('/?tab=settings', status_code=303)
+
+
+@app.post('/telegram/auto-reply-toggle-form')
+def toggle_telegram_auto_reply_form(db: Session = Depends(get_db)):
+    entry = settings_service.get_or_create(db)
+    entry.telegram_auto_reply_paused = 'no' if entry.telegram_auto_reply_paused == 'yes' else 'yes'
+    settings_service.save_telegram_runtime(db, entry)
+    status_label = 'возобновлены' if entry.telegram_auto_reply_paused == 'no' else 'остановлены'
+    return _redirect_with_notice(
+        f'Автоответы в Telegram {status_label}.',
+        notice_type='success',
+        tab='settings',
+    )
 
 
 @app.post('/telegram/request-code-form')

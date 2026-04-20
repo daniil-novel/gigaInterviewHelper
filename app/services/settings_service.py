@@ -23,6 +23,9 @@ class SettingsService:
             if entry.mail_poll_interval_seconds is None:
                 entry.mail_poll_interval_seconds = 60
                 changed = True
+            if not entry.telegram_auto_reply_paused:
+                entry.telegram_auto_reply_paused = 'no'
+                changed = True
             if changed:
                 db.add(entry)
                 db.commit()
@@ -39,6 +42,7 @@ class SettingsService:
             mail_poll_interval_seconds=60,
             telegram_auth_status='not_authorized',
             auto_send_telegram='no',
+            telegram_auto_reply_paused='no',
         )
         db.add(entry)
         db.commit()

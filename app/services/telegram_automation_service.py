@@ -22,10 +22,14 @@ class TelegramAutomationService:
         try:
             result = await client.send_code_request(settings.telegram_phone_number)
             settings.telegram_phone_code_hash = result.phone_code_hash
+            # ALWAYS persist the session string after a successful code request.
+            # Otherwise the auth_key negotiated during send_code_request is discarded
+            # on disconnect, a new auth_key is created for verify, and phone_code_hash
+            # becomes invalid ("The key is not registered in the system").
+            settings.telegram_session_string = client.session.save()
             settings.telegram_auth_status = 'code_sent'
             if await client.is_user_authorized():
                 settings.telegram_auth_status = 'authorized'
-                settings.telegram_session_string = client.session.save()
             return settings.telegram_phone_code_hash
         finally:
             await client.disconnect()
@@ -37,20 +41,23 @@ class TelegramAutomationService:
         client = TelegramClient(StringSession(settings.telegram_session_string or ''), int(settings.telegram_api_id), settings.telegram_api_hash)
         await client.connect()
         try:
-            await client.sign_in(
-                phone=settings.telegram_phone_number,
-                code=code,
-                phone_code_hash=settings.telegram_phone_code_hash,
-            )
-        except Exception as exc:
-            if password:
-                await client.sign_in(password=password)
-            else:
-                raise exc
-        settings.telegram_session_string = client.session.save()
-        settings.telegram_auth_status = 'authorized'
-        settings.telegram_phone_code_hash = ''
-        await client.disconnect()
+            try:
+                await client.sign_in(
+                    phone=settings.telegram_phone_number,
+                    code=code,
+                    phone_code_hash=settings.telegram_phone_code_hash,
+                )
+            except Exception as exc:
+                # SessionPasswordNeededError — 2FA required. Fall back to password sign in.
+                if password:
+                    await client.sign_in(password=password)
+                else:
+                    raise exc
+            settings.telegram_session_string = client.session.save()
+            settings.telegram_auth_status = 'authorized'
+            settings.telegram_phone_code_hash = ''
+        finally:
+            await client.disconnect()
 
     async def send_interview_answer(self, settings: AppSetting, session: InterviewSession, answer_text: str) -> str:
         self._ensure_available()

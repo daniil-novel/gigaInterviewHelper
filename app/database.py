@@ -67,6 +67,7 @@ def ensure_sqlite_migrations() -> None:
                 'telegram_phone_code_hash': "ALTER TABLE app_settings ADD COLUMN telegram_phone_code_hash TEXT DEFAULT ''",
                 'telegram_auth_status': "ALTER TABLE app_settings ADD COLUMN telegram_auth_status VARCHAR(50) DEFAULT 'not_authorized'",
                 'auto_send_telegram': "ALTER TABLE app_settings ADD COLUMN auto_send_telegram VARCHAR(10) DEFAULT 'no'",
+                'telegram_auto_reply_paused': "ALTER TABLE app_settings ADD COLUMN telegram_auto_reply_paused VARCHAR(10) DEFAULT 'no'",
             }
             for name, sql in additions.items():
                 if name not in columns:

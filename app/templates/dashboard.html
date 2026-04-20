@@ -51,6 +51,12 @@
                             <h2>Сессии интервью</h2>
                             <span>Основной рабочий раздел: открыл интервью, вставил вопрос, получил ответ</span>
                         </div>
+                        <div class="info-strip compact-strip">
+                            <span>Telegram автоответчик: {{ 'на паузе' if app_settings.telegram_auto_reply_paused == 'yes' else 'активен' }}</span>
+                            <span>После каждого сообщения GigaRecruiter приложение ждёт 10 секунд, чтобы не отвечать посреди серии сообщений.</span>
+                            <span>Если бот сообщил, что диалог по вакансии завершён, отклик уже у рекрутера или просит оценить диалог, новых сообщений в этот диалог приложение больше не отправляет.</span>
+                            <span>Раз в 30 секунд приложение также перепроверяет, не осталось ли в боте неотвеченного смыслового сообщения после рестарта или сбоя.</span>
+                        </div>
                         <form class="stack form-inline" action="/sessions/create-from-form" method="post">
                             <input name="vacancy_name" placeholder="Название вакансии" required />
                             <input name="interview_url" placeholder="Ссылка на AI-интервью" required />
@@ -346,6 +352,17 @@
                                 <span>Самый простой путь: вообще не заполнять этот блок. Просто открывай ссылку интервью и вставляй готовый ответ вручную.</span>
                                 <span>Advanced режим нужен только если ты хочешь, чтобы приложение пыталось отправлять сообщения в Telegram само.</span>
                             </div>
+                            <div class="info-strip compact-strip top-gap">
+                                <span>Статус автоответчика: {{ 'пауза' if app_settings.telegram_auto_reply_paused == 'yes' else 'работает' }}</span>
+                                <span>Каждый ответ отправляется только после 10 секунд тишины от бота.</span>
+                                <span>После системного финального сообщения или запроса оценить диалог приложение завершает текущую сессию и не шлёт в ответ `спасибо` или другие лишние реплики.</span>
+                                <span>Если listener что-то пропустил, каждые 30 секунд включается резервная проверка последних сообщений в диалоге.</span>
+                            </div>
+                            <form class="stack top-gap" action="/telegram/auto-reply-toggle-form" method="post">
+                                <button class="{{ 'primary-btn' if app_settings.telegram_auto_reply_paused == 'yes' else 'danger-btn' }}" type="submit">
+                                    {{ 'Возобновить автоответы в боте' if app_settings.telegram_auto_reply_paused == 'yes' else 'Остановить автоответы в боте' }}
+                                </button>
+                            </form>
                             <form class="stack top-gap" action="/settings/telegram-form" method="post">
                                 <div class="two-col">
                                     <label><span>API ID</span><input name="telegram_api_id" value="{{ app_settings.telegram_api_id }}" /></label>
