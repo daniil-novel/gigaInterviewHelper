@@ -258,7 +258,7 @@ class TelegramListenerService:
     async def _check_unanswered_messages(self) -> None:
         if self._client is None:
             return
-        for username in self._poll_candidates():
+        for username in await self._poll_candidates():
             try:
                 entity = await self._client.get_entity(username)
                 chat_key = int(getattr(entity, 'id', 0) or 0)
@@ -278,21 +278,35 @@ class TelegramListenerService:
                 logger.exception('failed to inspect unanswered messages for @%s', username)
                 self._log_error('telegram_unanswered_chat_failed', f'{username}: {exc}')
 
-    def _poll_candidates(self) -> list[str]:
+    async def _poll_candidates(self) -> list[str]:
+        usernames = self._known_session_bot_usernames()
+        if self._client is None:
+            return usernames
+
+        try:
+            async for dialog in self._client.iter_dialogs(limit=100):
+                entity = getattr(dialog, 'entity', None)
+                if entity is None or not getattr(entity, 'bot', False):
+                    continue
+                username = (getattr(entity, 'username', '') or '').lower()
+                if not username:
+                    continue
+                display_name = self._normalize_text(getattr(dialog, 'name', '') or '')
+                if self._looks_like_recruiter_chat(username, display_name):
+                    usernames.append(username)
+        except Exception as exc:
+            logger.exception('failed to enumerate telegram dialogs for polling')
+            self._log_error('telegram_dialog_enumeration_failed', str(exc))
+
+        return list(dict.fromkeys(usernames))
+
+    def _known_session_bot_usernames(self) -> list[str]:
         db = SessionLocal()
         try:
-            sessions = (
-                db.query(InterviewSession)
-                .filter(InterviewSession.state.in_(['new', 'active', 'waiting_approval']))
-                .order_by(InterviewSession.updated_at.desc())
-                .all()
-            )
+            sessions = db.query(InterviewSession).order_by(InterviewSession.updated_at.desc()).all()
             result: list[str] = []
             seen: set[str] = set()
             for session in sessions:
-                meta = dict(session.meta or {})
-                if meta.get('telegram_dialog_finished'):
-                    continue
                 username, _ = self._parse_tg(session.interview_url)
                 if not username or username in seen:
                     continue
@@ -514,11 +528,6 @@ class TelegramListenerService:
             active = self._active_candidate(candidates, username)
             if active is not None:
                 return (active.id, active.session_id)
-            if len(candidates) == 1:
-                return (candidates[0].id, candidates[0].session_id)
-            if candidates:
-                latest = candidates[0]
-                return (latest.id, latest.session_id)
             return None
         finally:
             db.close()
@@ -537,6 +546,13 @@ class TelegramListenerService:
                 if active is not None:
                     return (active.id, active.session_id)
                 if len(candidates) == 1:
+                    self._mark_session_active(
+                        db,
+                        username,
+                        candidates[0],
+                        match_text=message_text,
+                        match_score=SESSION_MATCH_THRESHOLD,
+                    )
                     return (candidates[0].id, candidates[0].session_id)
                 return None
 
@@ -561,12 +577,7 @@ class TelegramListenerService:
             db.close()
 
     def _session_candidates_for_bot(self, db, username: str) -> list[InterviewSession]:
-        sessions = (
-            db.query(InterviewSession)
-            .filter(InterviewSession.state != 'completed')
-            .order_by(InterviewSession.updated_at.desc())
-            .all()
-        )
+        sessions = db.query(InterviewSession).order_by(InterviewSession.updated_at.desc()).all()
         return [session for session in sessions if self._parse_tg(session.interview_url)[0].lower() == username.lower()]
 
     def _active_candidate(self, candidates: list[InterviewSession], username: str) -> InterviewSession | None:
@@ -643,7 +654,7 @@ class TelegramListenerService:
                     meta['telegram_bootstrap_sent'] = True
                     meta['telegram_bootstrap_auto'] = True
                 session.meta = meta
-                if session.state == 'new':
+                if session.state in {'new', 'completed'}:
                     session.state = 'active'
             elif meta.get('telegram_active_for_bot') == username:
                 meta.pop('telegram_active_for_bot', None)
@@ -838,6 +849,22 @@ class TelegramListenerService:
         if os.getenv('GIH_INTERACTIVE_LOG', '').strip().lower() not in {'1', 'true', 'yes', 'on'}:
             return
         print(f'[telegram:{kind}][@{username}][{session_id}] {text}', flush=True)
+
+    @classmethod
+    def _looks_like_recruiter_chat(cls, username: str, display_name: str) -> bool:
+        normalized_username = cls._normalize_text(username)
+        combined = f'{normalized_username} {display_name}'.strip()
+        markers = (
+            'giga',
+            'gigarecruit',
+            'gigarecruiter',
+            'gigarecruter',
+            'beira',
+            'бира',
+            'рекрутер',
+            'recruit',
+        )
+        return any(marker in combined for marker in markers)
 
     def _log_info(self, event_type: str, message: str) -> None:
         db = SessionLocal()
