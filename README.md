@@ -15,6 +15,7 @@ MVP из ТЗ: FastAPI + SQLite + web-панель для автоматизир
 - LLM-парсинг резюме в профиль кандидата;
 - Telegram user API: хранение `api_id`, `api_hash`, телефона, отправка кода, подтверждение кода, хранение session string;
 - автоматическая отправка подтверждённого ответа в Telegram, если ссылка интервью ведёт на `t.me`/`telegram.me`.
+- Telegram listener с дебаунсом 10 секунд и резервной проверкой неотвеченных сообщений каждые 30 секунд.
 
 ## Запуск
 
@@ -23,10 +24,30 @@ python -m venv .venv
 .\.venv\Scripts\python -m ensurepip --upgrade
 .\.venv\Scripts\python -m pip install -r requirements.txt
 copy .env.example .env
-.\.venv\Scripts\python -m uvicorn app.main:app --reload
+.\.venv\Scripts\python run_app.py start
 ```
 
 Открыть: `http://127.0.0.1:8000`
+
+## Команды запуска и остановки
+
+### Фоновый режим
+
+```bash
+.\.venv\Scripts\python run_app.py start
+.\.venv\Scripts\python run_app.py status
+.\.venv\Scripts\python run_app.py stop
+```
+
+Фоновый режим пишет PID и логи в `.runtime/`.
+
+### Интерактивный режим
+
+```bash
+.\.venv\Scripts\python run_app.py start -i --reload
+```
+
+В этом режиме сервер работает в текущем терминале, а Telegram-вопросы и сгенерированные ответы дублируются в консоль. Остановка стандартная: `Ctrl+C`.
 
 ## Gmail OAuth: как настроить
 
@@ -124,6 +145,11 @@ http://127.0.0.1:8000/auth/gmail/callback
 - нажми `Отправить код в Telegram`;
 - введи код;
 - при необходимости введи 2FA password.
+
+Дополнительно:
+- после каждого сообщения от GigaRecruiter приложение ждёт 10 секунд, чтобы бот успел дослать всю пачку сообщений;
+- если сервер перезапускался или listener пропустил событие, раз в 30 секунд приложение перепроверяет последние сообщения в активных Telegram-чатах и отвечает на смысловой вопрос;
+- если бот завершил диалог, сообщил, что отклик уже у рекрутера, или просит оценить диалог, ответ не отправляется.
 
 Важно:
 - `Ваш ID` в Telegram не подходит для этого режима;
