@@ -8,6 +8,7 @@ import httpx
 from app.config import get_settings
 from app.schemas import CandidateProfilePayload, OpenRouterSettingsPayload
 
+RESUME_PARSE_MODEL = 'google/gemini-3.1-pro-preview'
 
 SYSTEM_PROMPT = """Ты помощник кандидата на AI-интервью. Отвечай от первого лица, как сам кандидат.
 
@@ -65,6 +66,7 @@ RESUME_PARSE_PROMPT = """Ты карьерный ассистент и очен�
 class LLMService:
     def __init__(self) -> None:
         self.settings = get_settings()
+        self.resume_parse_model = RESUME_PARSE_MODEL
 
     async def generate_answer(
         self,
@@ -103,7 +105,7 @@ class LLMService:
             source_resume_name=resume_path.name,
             raw_resume_text=json.dumps(parsed, ensure_ascii=False, indent=2),
             parsing_notes=parsed.get('parsing_notes', ''),
-            last_parsed_with_model=openrouter.openrouter_model,
+            last_parsed_with_model=self.resume_parse_model,
         )
 
     async def _call_openrouter_answer(
@@ -133,7 +135,7 @@ class LLMService:
         }
         async with httpx.AsyncClient(timeout=35.0) as client:
             response = await client.post('https://openrouter.ai/api/v1/chat/completions', headers=headers, json=body)
-            response.raise_for_status()
+            self._ensure_success(response, 'OpenRouter answer generation')
             payload = response.json()
         content = payload['choices'][0]['message']['content']
         parsed = json.loads(content)
@@ -147,8 +149,7 @@ class LLMService:
         encoded = base64.b64encode(resume_path.read_bytes()).decode('ascii')
         headers = self._headers(openrouter)
         body = {
-            'model': openrouter.openrouter_model,
-            'plugins': [{'id': 'file-parser', 'pdf': {'engine': openrouter.pdf_engine}}],
+            'model': self.resume_parse_model,
             'response_format': {'type': 'json_object'},
             'messages': [
                 {'role': 'system', 'content': RESUME_PARSE_PROMPT},
@@ -159,7 +160,7 @@ class LLMService:
                         {
                             'type': 'file',
                             'file': {
-                                'filename': resume_path.name,
+                                'filename': 'resume.pdf',
                                 'file_data': f'data:application/pdf;base64,{encoded}',
                             },
                         },
@@ -169,7 +170,7 @@ class LLMService:
         }
         async with httpx.AsyncClient(timeout=80.0) as client:
             response = await client.post('https://openrouter.ai/api/v1/chat/completions', headers=headers, json=body)
-            response.raise_for_status()
+            self._ensure_success(response, 'OpenRouter resume parsing')
             payload = response.json()
         content = payload['choices'][0]['message']['content']
         if isinstance(content, list):
@@ -183,6 +184,13 @@ class LLMService:
             'HTTP-Referer': self.settings.app_base_url,
             'X-Title': self.settings.app_name,
         }
+
+    def _ensure_success(self, response: httpx.Response, context: str) -> None:
+        if response.is_success:
+            return
+        body = response.text.strip()
+        body = shorten(body, width=600, placeholder='...')
+        raise RuntimeError(f'{context} failed ({response.status_code}): {body}')
 
     def _fallback_answer(self, question: str, profile: CandidateProfilePayload) -> str:
         lead = self._pick_lead(question, profile)

@@ -272,19 +272,16 @@
                     <section class="panel">
                         <div class="panel-head">
                             <h2>OpenRouter</h2>
-                            <span>Ключ и модель можно менять на лету</span>
+                            <span>Ключ и модель ответов можно менять на лету</span>
                         </div>
                         <form class="stack" action="/settings/openrouter-form" method="post">
                             <label><span>API key</span><input type="password" name="openrouter_api_key" value="{{ app_settings.openrouter_api_key }}" placeholder="sk-or-v1-..." /></label>
-                            <label><span>Модель</span><input name="openrouter_model" value="{{ app_settings.openrouter_model }}" /></label>
-                            <label>
-                                <span>PDF engine</span>
-                                <select name="pdf_engine">
-                                    <option value="pdf-text" {% if app_settings.pdf_engine == 'pdf-text' %}selected{% endif %}>pdf-text</option>
-                                    <option value="mistral-ocr" {% if app_settings.pdf_engine == 'mistral-ocr' %}selected{% endif %}>mistral-ocr</option>
-                                </select>
-                            </label>
-                            <div class="info-strip"><span>Текущий ключ: {{ masked_openrouter_key }}</span></div>
+                            <label><span>Модель для ответов</span><input name="openrouter_model" value="{{ app_settings.openrouter_model }}" /></label>
+                            <div class="info-strip compact-strip">
+                                <span>Текущий ключ: {{ masked_openrouter_key }}</span>
+                                <span>Парсинг резюме всегда идёт через {{ resume_parser_model }}</span>
+                                <span>PDF отправляется нативно в Gemini без `file-parser`, чтобы не ловить ошибки разбора файла от OpenRouter</span>
+                            </div>
                             <button class="primary-btn" type="submit">Сохранить OpenRouter</button>
                         </form>
                     </section>

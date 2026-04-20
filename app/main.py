@@ -171,6 +171,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
             'app_settings': app_settings,
             'openrouter_settings': app_settings,
             'masked_openrouter_key': settings_service.masked_key(app_settings.openrouter_api_key),
+            'resume_parser_model': llm_service.resume_parse_model,
             'masked_imap_password': settings_service.masked_secret(app_settings.imap_password),
             'masked_gmail_client_secret': settings_service.masked_secret(app_settings.gmail_oauth_client_secret),
             'has_gmail_refresh_token': bool(app_settings.gmail_oauth_refresh_token),
